@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #06b6d4;
+  /* cyan-500 */
+  --color-primary-glow: rgba(6, 182, 212, 0.5);
+  --color-luxury-navy: #020617;
+  --color-gold-accent: #fbbf24;
+  --color-glass: rgba(15, 23, 42, 0.7);
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-luxury-navy text-slate-50 antialiased selection:bg-cyan-500/30;
+    font-family: var(--font-sans);
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-glass backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl;
+  }
+
+  .glow-cyan {
+    box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
+  }
+
+  .glow-cyan-hover:hover {
+    box-shadow: 0 0 40px rgba(6, 182, 212, 0.5);
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+}
+
+/* Animations */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+
+  50% {
+    transform: scale(1.1);
+    opacity: 0.3;
+  }
+
+  100% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes wave {
+
+  0%,
+  100% {
+    height: 4px;
+  }
+
+  50% {
+    height: 20px;
+  }
+}
+
+.voice-wave {
+  @apply w-1 bg-cyan-400 rounded-full;
+  animation: wave 1s ease-in-out infinite;
+}
+
+.voice-wave:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.voice-wave:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.voice-wave:nth-child(4) {
+  animation-delay: 0.1s;
+}
+
+.voice-wave:nth-child(5) {
+  animation-delay: 0.3s;
+}
