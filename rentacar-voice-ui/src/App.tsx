@@ -5,7 +5,10 @@ import { VoicePanel } from './components/VoicePanel';
 import { TranscriptPanel } from './components/TranscriptPanel';
 import { motion } from 'framer-motion';
 
-const vapi = new Vapi(import.meta.env.VITE_VAPI_PUBLIC_KEY || '');
+const PUBLIC_KEY = import.meta.env.VITE_VAPI_PUBLIC_KEY;
+const ASSISTANT_ID = import.meta.env.VITE_VAPI_ASSISTANT_ID;
+
+const vapi = new Vapi(PUBLIC_KEY || '');
 
 interface Message {
   role: 'user' | 'ai';
@@ -21,12 +24,14 @@ function App() {
 
   useEffect(() => {
     vapi.on('call-start', () => {
+      console.log('Call started');
       setConnecting(false);
       setConnected(true);
       setError(null);
     });
 
     vapi.on('call-end', () => {
+      console.log('Call ended');
       setConnecting(false);
       setConnected(false);
       setIsSpeaking(false);
@@ -52,7 +57,7 @@ function App() {
 
     vapi.on('error', (e) => {
       console.error('Vapi error:', e);
-      setError('Connection failed.');
+      setError('Connection Error. Check your microphone and keys.');
       setConnecting(false);
       setConnected(false);
     });
@@ -63,13 +68,33 @@ function App() {
   }, []);
 
   const toggleCall = () => {
+    setError(null);
     if (connected) {
       vapi.stop();
     } else {
+      if (!PUBLIC_KEY || PUBLIC_KEY.includes('YOUR_PUBLIC_KEY')) {
+        setError('Missing Vapi Public Key');
+        return;
+      }
+      if (!ASSISTANT_ID || ASSISTANT_ID.includes('YOUR_ASSISTANT_ID')) {
+        setError('Missing Assistant ID');
+        return;
+      }
+
       setConnecting(true);
-      vapi.start(import.meta.env.VITE_VAPI_ASSISTANT_ID || '').catch((e) => {
+
+      // Safety timeout: if not connected in 10s, reset state
+      const timeout = setTimeout(() => {
+        if (!connected) {
+          setConnecting(false);
+          setError('Connection Timeout. Refresh and try again.');
+        }
+      }, 10000);
+
+      vapi.start(ASSISTANT_ID).catch((e) => {
+        clearTimeout(timeout);
         console.error('Start call error:', e);
-        setError('Could not start call.');
+        setError('Failed to start voice assist.');
         setConnecting(false);
       });
     }
