@@ -8,6 +8,7 @@ from sqlalchemy import and_, or_
 
 import database
 from database import Car, Booking, get_db, init_db
+import calendar_service
 
 app = FastAPI(title="Renta Car Backend")
 
@@ -177,6 +178,12 @@ def create_booking(req: CreateBookingRequest, db: Session = Depends(get_db)):
     db.add(new_booking)
     db.commit()
     db.refresh(new_booking)
+    
+    # 3. Create Google Calendar Event (Async-like attempt)
+    try:
+        calendar_service.create_calendar_event(new_booking)
+    except Exception as e:
+        print(f"Calendar background error: {e}")
     
     return {
         "success": True,
