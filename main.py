@@ -2,7 +2,8 @@ import random
 import string
 from datetime import datetime
 from typing import List, Optional
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
@@ -11,6 +12,14 @@ from database import Car, Booking, get_db, init_db
 import calendar_service
 
 app = FastAPI(title="Renta Car Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize database on startup
 @app.on_event("startup")
@@ -35,8 +44,8 @@ class CarInfo(BaseModel):
 class CreateBookingRequest(BaseModel):
     fullName: str
     phoneNumber: str
-    pickupDateTime: str  # YYYY-MM-DD HH:MM
-    returnDateTime: str  # YYYY-MM-DD HH:MM
+    pickupDateTime: str  # ISO 8601
+    returnDateTime: str  # ISO 8601
     pickupLocation: str
     dropoffLocation: str
     carCategory: str
@@ -51,8 +60,8 @@ class BookingResponse(BaseModel):
     error: Optional[str] = None
 
 class CheckAvailabilityRequest(BaseModel):
-    pickupDateTime: str  # YYYY-MM-DD HH:MM
-    returnDateTime: str  # YYYY-MM-DD HH:MM
+    pickupDateTime: str  # ISO 8601
+    returnDateTime: str  # ISO 8601
     carCategory: str
 
 class AvailabilityResponse(BaseModel):
@@ -94,6 +103,27 @@ class CancelBookingResponse(BaseModel):
     bookingReference: Optional[str] = None
     error: Optional[str] = None
 
+class SingleBookingInfo(BaseModel):
+    bookingReference: str
+    fullName: str
+    phoneNumber: str
+    pickupDateTime: str
+    returnDateTime: str
+    pickupLocation: str
+    dropoffLocation: str
+    carCategory: str
+    status: str
+    duration: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class AllBookingsResponse(BaseModel):
+    success: bool
+    bookings: List[SingleBookingInfo]
+    message: str
+    total: int = 0
+
 # --- Helpers ---
 
 def generate_reference():
@@ -120,7 +150,7 @@ def is_car_available(db: Session, car_id: int, pickup_dt_str: str, return_dt_str
 # --- Endpoints ---
 
 @app.post("/api/create-booking", response_model=BookingResponse)
-def create_booking(req: CreateBookingRequest, db: Session = Depends(get_db)):
+def create_booking(req: CreateBookingRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     pickup_dt_str = req.pickupDateTime
     return_dt_str = req.returnDateTime
     
@@ -179,11 +209,8 @@ def create_booking(req: CreateBookingRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_booking)
     
-    # 3. Create Google Calendar Event (Async-like attempt)
-    try:
-        calendar_service.create_calendar_event(new_booking)
-    except Exception as e:
-        print(f"Calendar background error: {e}")
+    # 3. Create Google Calendar Event (Non-blocking)
+    background_tasks.add_task(calendar_service.create_calendar_event, new_booking)
     
     return {
         "success": True,
@@ -308,6 +335,76 @@ def cancel_booking(req: CancelBookingRequest, db: Session = Depends(get_db)):
         "bookingReference": booking.booking_reference
     }
 
+import os
+
+def mask_name(name: str) -> str:
+    parts = name.split()
+    if len(parts) > 1:
+        return f"{parts[0]} {parts[-1][0]}."
+    return name
+
+def mask_phone(phone: str) -> str:
+    if len(phone) > 7:
+        return f"{phone[:4]}****{phone[-3:]}"
+    return "****"
+
+def calculate_duration_str(start_str: str, end_str: str) -> str:
+    try:
+        start = datetime.strptime(start_str, "%Y-%m-%d %H:%M")
+        end = datetime.strptime(end_str, "%Y-%m-%d %H:%M")
+        diff = end - start
+        days = diff.days
+        hours = diff.seconds // 3600
+        parts = []
+        if days > 0: parts.append(f"{days}d")
+        if hours > 0: parts.append(f"{hours}h")
+        return " ".join(parts) if parts else "< 1h"
+    except:
+        return "Unknown"
+
+@app.get("/api/get-all-bookings", response_model=AllBookingsResponse)
+def get_all_bookings(
+    limit: int = 50, 
+    offset: int = 0, 
+    carCategory: Optional[str] = None, 
+    x_admin_key: Optional[str] = Header(None), 
+    db: Session = Depends(get_db)
+):
+    # Security: Verify Admin Key
+    env_admin_key = os.getenv("ADMIN_KEY", "RENTACAR_ELITE_2026")
+    if x_admin_key != env_admin_key:
+        raise HTTPException(status_code=403, detail="Forbidden: Valid Admin Key required.")
+
+    query = db.query(Booking).filter(Booking.status == "confirmed")
+    if carCategory:
+        query = query.filter(Booking.car_category == carCategory)
+    
+    total_count = query.count()
+    bookings = query.order_by(Booking.created_at.desc()).offset(offset).limit(limit).all()
+    
+    booking_list = []
+    for b in bookings:
+        booking_list.append({
+            "bookingReference": b.booking_reference,
+            "fullName": mask_name(b.full_name),
+            "phoneNumber": mask_phone(b.phone_number),
+            "pickupDateTime": b.pickup_date_time,
+            "returnDateTime": b.return_date_time,
+            "duration": calculate_duration_str(b.pickup_date_time, b.return_date_time),
+            "pickupLocation": b.pickup_location,
+            "dropoffLocation": b.dropoff_location,
+            "carCategory": b.car_category,
+            "status": b.status
+        })
+        
+    return {
+        "success": True,
+        "bookings": booking_list,
+        "total": total_count,
+        "message": f"Retrieved {len(booking_list)} bookings."
+    }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

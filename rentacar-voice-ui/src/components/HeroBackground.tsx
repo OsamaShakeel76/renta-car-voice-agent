@@ -1,11 +1,11 @@
 import { motion } from 'framer-motion';
+import type { RootState } from '@react-three/fiber';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Points, PointMaterial } from '@react-three/drei';
-import { useRef, useState, useMemo } from 'react';
-import * as THREE from 'three';
+import { useRef, useState } from 'react';
 
 const ParticleField = () => {
-    const ref = useRef<any>();
+    const ref = useRef<any>(null);
     const [sphere] = useState(() => {
         const coords = new Float32Array(2000 * 3);
         for (let i = 0; i < 2000; i++) {
@@ -19,7 +19,7 @@ const ParticleField = () => {
         return coords;
     });
 
-    useFrame((state, delta) => {
+    useFrame((_state: RootState, delta: number) => {
         if (ref.current) {
             ref.current.rotation.x -= delta / 10;
             ref.current.rotation.y -= delta / 15;

@@ -7,21 +7,22 @@ interface VoicePanelProps {
     isSpeaking: boolean;
     onToggle: () => void;
     status: string;
+    hasError?: boolean;
 }
 
-export const VoicePanel = ({ connecting, connected, isSpeaking, onToggle, status }: VoicePanelProps) => {
+export const VoicePanel = ({ connecting, connected, isSpeaking, onToggle, status, hasError }: VoicePanelProps) => {
     return (
         <motion.div
             initial={{ opacity: 0, x: -30 }}
             animate={{ opacity: 1, x: 0 }}
-            className="glass-panel p-8 md:p-12 flex flex-col gap-8 w-full max-w-md glow-cyan"
+            className="glass-panel p-6 sm:p-8 md:p-12 flex flex-col gap-6 md:gap-8 w-full max-w-md glow-cyan mx-auto"
         >
             <div className="flex justify-between items-start">
                 <div>
                     <motion.h2
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="text-4xl font-extrabold tracking-tighter bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent"
+                        className="text-3xl md:text-4xl font-extrabold tracking-tighter bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent"
                     >
                         NOVA
                     </motion.h2>
@@ -75,11 +76,12 @@ export const VoicePanel = ({ connecting, connected, isSpeaking, onToggle, status
                 </div>
 
                 <div className="flex flex-col items-center gap-2">
-                    <div className="flex items-center gap-2 px-4 py-1.5 bg-white/5 border border-white/10 rounded-full">
-                        <div className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' :
+                    <div className={`flex items-center gap-2 px-4 py-1.5 bg-white/5 border border-white/10 rounded-full ${hasError ? 'border-rose-500/50 bg-rose-500/5' : ''}`}>
+                        <div className={`w-2 h-2 rounded-full ${hasError ? 'bg-rose-500' :
+                            connected ? 'bg-emerald-400 animate-pulse' :
                                 connecting ? 'bg-cyan-400 animate-bounce' : 'bg-slate-500'
                             }`} />
-                        <span className="text-sm font-semibold tracking-wide uppercase text-slate-300">
+                        <span className={`text-sm font-semibold tracking-wide uppercase ${hasError ? 'text-rose-400' : 'text-slate-300'}`}>
                             {status}
                         </span>
                     </div>

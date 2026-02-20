@@ -25,7 +25,7 @@ export const TranscriptPanel = ({ messages, onClear }: TranscriptPanelProps) => 
         <motion.div
             initial={{ opacity: 0, x: 30 }}
             animate={{ opacity: 1, x: 0 }}
-            className="glass-panel p-6 md:p-8 flex flex-col gap-6 w-full h-[600px] glow-cyan"
+            className="glass-panel p-6 md:p-8 flex flex-col gap-6 w-full h-[500px] md:h-[600px] glow-cyan mx-auto"
         >
             <div className="flex justify-between items-center pb-4 border-b border-white/10">
                 <div className="flex items-center gap-2">
