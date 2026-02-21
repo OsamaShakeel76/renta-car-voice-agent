@@ -1,12 +1,12 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
 import Vapi from '@vapi-ai/web';
-import { HeroBackground } from './components/HeroBackground';
+
 import { VoicePanel } from './components/VoicePanel';
 import { TranscriptPanel } from './components/TranscriptPanel';
 import { BookingCalendar } from './components/BookingCalendar';
 import { BookingsList } from './components/BookingsList';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, Mic, Shield } from 'lucide-react';
+import { Calendar, Mic, Shield, RefreshCcw } from 'lucide-react';
 
 const PUBLIC_KEY = import.meta.env.VITE_VAPI_PUBLIC_KEY;
 const ASSISTANT_ID = import.meta.env.VITE_VAPI_ASSISTANT_ID;
@@ -21,7 +21,7 @@ function App() {
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const connectedRef = useRef(false);
-  const timeoutRef = useRef<any>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -51,22 +51,33 @@ function App() {
     vapi.on('speech-start', () => setIsSpeaking(true));
     vapi.on('speech-end', () => setIsSpeaking(false));
 
-    vapi.on('message', (message: any) => {
+    vapi.on('message', (message: { type: string; transcriptType?: string; role?: string; transcript?: string; toolCallResult?: { name: string }; name?: string; toolCall?: { name: string } }) => {
+      console.log("VAPI MESSAGE EVENT:", message);
       if (message.type === 'transcript' && message.transcriptType === 'final') {
         setMessages((prev) => {
           const lastMsg = prev[prev.length - 1];
           const newRole = message.role === 'assistant' ? 'ai' : 'user';
-          if (lastMsg && lastMsg.role === newRole && lastMsg.text === message.transcript) {
+          if (lastMsg && lastMsg.role === newRole && lastMsg.text === (message.transcript || '')) {
             return prev;
           }
-          return [...prev, { role: newRole, text: message.transcript }];
+          return [...prev, { role: newRole, text: message.transcript || '' }];
         });
       }
 
-      if (message.type === 'tool-call-result' && message.toolCallResult?.name === 'create-booking') {
-        setRefreshKey(prev => prev + 1);
+      if (message.type === 'tool-call-result') {
+        const toolName =
+          message.toolCallResult?.name ||
+          message.name ||
+          message.toolCall?.name;
+
+        console.log("TOOL CALL RESULT:", toolName, message);
+        if (toolName === 'create-booking' || toolName === 'create_booking') {
+          setRefreshKey(prev => prev + 1);
+        }
       }
     });
+
+
 
     vapi.on('error', (e: any) => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -128,7 +139,7 @@ function App() {
 
   return (
     <div className="relative min-h-screen w-full flex flex-col items-center justify-center p-4 md:p-8">
-      <HeroBackground />
+
 
       <div className="fixed top-8 z-50 flex items-center gap-1 p-1 bg-slate-900/50 backdrop-blur-xl border border-white/10 rounded-full shadow-2xl">
         <button
@@ -151,6 +162,14 @@ function App() {
         >
           <Shield className="w-3.5 h-3.5" />
           <span>Booked</span>
+        </button>
+        <div className="w-[1px] h-4 bg-white/10 mx-2" />
+        <button
+          onClick={() => setRefreshKey(prev => prev + 1)}
+          className="flex items-center gap-2 px-4 py-2 rounded-full transition-all text-slate-400 hover:text-white hover:bg-white/5"
+          title="Refresh Data"
+        >
+          <RefreshCcw className={`w-3.5 h-3.5 ${refreshKey > 0 ? 'animate-spin-once' : ''}`} />
         </button>
       </div>
 
@@ -217,12 +236,12 @@ function App() {
             transition={{ duration: 0.4, ease: "easeOut" }}
             className="w-full"
           >
-            <BookingsList />
+            <BookingsList refreshKey={refreshKey} />
           </motion.main>
         )}
       </AnimatePresence>
 
-      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-cyan-500/5 blur-[120px] rounded-full -z-10" />
+
     </div>
   );
 }

@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, Clock, User, Phone, MapPin, Car, Shield, Lock, Search, Filter, ChevronDown, Loader2 } from 'lucide-react';
+import { User, Phone, MapPin, Car, Shield, Lock, Search, Filter, ChevronDown, Loader2 } from 'lucide-react';
 
 interface Booking {
-    bookingReference: string;
-    fullName: string;
-    phoneNumber: string;
+    id: number;
+    customerName: string;
+    customerPhone: string;
     pickupDateTime: string;
     returnDateTime: string;
     duration: string;
@@ -17,7 +17,7 @@ interface Booking {
 
 const ADMIN_KEY = import.meta.env.VITE_ADMIN_KEY || 'RENTACAR_ELITE_2026';
 
-export const BookingsList = () => {
+export const BookingsList = ({ refreshKey = 0 }: { refreshKey?: number }) => {
     const [isAdmin, setIsAdmin] = useState(false);
     const [pin, setPin] = useState('');
     const [error, setError] = useState('');
@@ -28,12 +28,15 @@ export const BookingsList = () => {
     const [categoryFilter, setCategoryFilter] = useState('');
     const [hasMore, setHasMore] = useState(true);
 
-    const fetchBookings = async (reset = false) => {
+    const fetchBookings = useCallback(async (reset = false) => {
         setLoading(true);
         const offset = reset ? 0 : page * 10;
         try {
-            const resp = await fetch(`/api/get-all-bookings?limit=10&offset=${offset}${categoryFilter ? `&carCategory=${categoryFilter}` : ''}`, {
-                headers: { 'X-Admin-Key': ADMIN_KEY }
+            const resp = await fetch(`/api/get-all-bookings?limit=10&offset=${offset}${categoryFilter ? `&carCategory=${categoryFilter}` : ''}&status=booked`, {
+                headers: {
+                    'X-Admin-Key': ADMIN_KEY,
+                    'Cache-Control': 'no-cache'
+                }
             });
             const data = await resp.json();
             if (data.success) {
@@ -46,18 +49,27 @@ export const BookingsList = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [page, categoryFilter]);
 
     useEffect(() => {
         if (isAdmin) {
             fetchBookings(true);
             setPage(1);
         }
-    }, [isAdmin, categoryFilter]);
+    }, [isAdmin, fetchBookings]);
+
+    // Refetch when a new booking is created (e.g. via voice) so Booked Ride list updates immediately
+    useEffect(() => {
+        if (isAdmin && refreshKey > 0) {
+            fetchBookings(true);
+            setPage(1);
+        }
+    }, [refreshKey, isAdmin, fetchBookings]);
 
     const handlePinSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (pin === '1234') { // Simple default PIN
+        // Changed dashboard pin to 123 as per user request
+        if (pin === '123') {
             setIsAdmin(true);
             setError('');
         } else {
@@ -91,11 +103,10 @@ export const BookingsList = () => {
                         <form onSubmit={handlePinSubmit} className="w-full flex flex-col gap-4">
                             <input
                                 type="password"
-                                maxLength={4}
                                 value={pin}
                                 onChange={(e) => setPin(e.target.value)}
-                                placeholder="○ ○ ○ ○"
-                                className="w-full bg-slate-800/50 border border-white/10 rounded-2xl py-4 text-center text-2xl tracking-[1em] text-cyan-500 focus:outline-none focus:border-cyan-500/50 transition-all placeholder:text-slate-600 placeholder:tracking-normal"
+                                placeholder="Enter PIN"
+                                className="w-full bg-slate-800/50 border border-white/10 rounded-2xl py-4 text-center text-2xl tracking-[0.5em] text-cyan-500 focus:outline-none focus:border-cyan-500/50 transition-all placeholder:text-slate-600 placeholder:tracking-normal"
                                 autoFocus
                             />
                             {error && <p className="text-red-400 text-xs text-center font-medium">{error}</p>}
@@ -148,7 +159,7 @@ export const BookingsList = () => {
                 <AnimatePresence>
                     {bookings.map((booking, idx) => (
                         <motion.div
-                            key={booking.bookingReference}
+                            key={booking.id}
                             initial={{ opacity: 0, scale: 0.9 }}
                             animate={{ opacity: 1, scale: 1 }}
                             transition={{ delay: idx * 0.05 }}
@@ -160,7 +171,7 @@ export const BookingsList = () => {
                                     <Car className="w-6 h-6 text-cyan-500" />
                                 </div>
                                 <span className="px-3 py-1 bg-slate-800/80 rounded-full text-[10px] font-black text-cyan-400 border border-white/5 tracking-tighter uppercase">
-                                    {booking.bookingReference}
+                                    RB-{booking.id}
                                 </span>
                             </div>
 
@@ -171,10 +182,10 @@ export const BookingsList = () => {
                                         <User className="w-4 h-4 text-slate-400" />
                                     </div>
                                     <div>
-                                        <h3 className="text-white font-bold text-sm">{booking.fullName}</h3>
+                                        <h3 className="text-white font-bold text-sm">{booking.customerName}</h3>
                                         <div className="flex items-center gap-1.5 text-slate-500 text-[11px]">
                                             <Phone className="w-3 h-3" />
-                                            <span>{booking.phoneNumber}</span>
+                                            <span>{booking.customerPhone}</span>
                                         </div>
                                     </div>
                                 </div>

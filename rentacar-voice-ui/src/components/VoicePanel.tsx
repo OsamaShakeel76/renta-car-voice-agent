@@ -24,7 +24,7 @@ export const VoicePanel = ({ connecting, connected, isSpeaking, onToggle, status
                         animate={{ opacity: 1 }}
                         className="text-3xl md:text-4xl font-extrabold tracking-tighter bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent"
                     >
-                        NOVA
+                        Car Rental
                     </motion.h2>
                     <p className="text-cyan-400/80 font-medium tracking-widest text-xs mt-1 uppercase">Luxury Voice Assist</p>
                 </div>
@@ -108,7 +108,7 @@ export const VoicePanel = ({ connecting, connected, isSpeaking, onToggle, status
     );
 };
 
-const QuickAction = ({ text, icon, onClick }: { text: string; icon: any; onClick: () => void }) => (
+const QuickAction = ({ text, icon, onClick }: { text: string; icon: React.ReactNode; onClick: () => void }) => (
     <button
         onClick={onClick}
         className="flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/5 rounded-xl text-[11px] text-slate-400 hover:bg-white/10 hover:border-white/20 transition-all uppercase tracking-wider font-bold"

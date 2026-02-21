@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { motion } from 'framer-motion';
 import type { RootState } from '@react-three/fiber';
 import { Canvas, useFrame } from '@react-three/fiber';
@@ -5,7 +6,7 @@ import { Points, PointMaterial } from '@react-three/drei';
 import { useRef, useState } from 'react';
 
 const ParticleField = () => {
-    const ref = useRef<any>(null);
+    const ref = useRef<THREE.Points>(null);
     const [sphere] = useState(() => {
         const coords = new Float32Array(2000 * 3);
         for (let i = 0; i < 2000; i++) {

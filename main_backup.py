@@ -1,29 +1,20 @@
 import random
 import string
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from dateutil import parser as dtparser
 from typing import List, Optional, Tuple
 from fastapi import FastAPI, Depends, HTTPException, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func, case
+from sqlalchemy import and_, or_
 
 import database
-import logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-from database import Car, Booking, get_db, init_db, SessionLocal, engine
+from database import Car, Booking, get_db, init_db, SessionLocal
 import calendar_service
 
 KHI_TZ = ZoneInfo("Asia/Karachi")
-DEBUG_BOOKING = os.getenv("DEBUG_BOOKING", "0") == "1"
-
-def dlog(msg: str, **kwargs):
-    if DEBUG_BOOKING:
-        logger.info("[DEBUG_BOOKING] " + msg + " | " + str(kwargs))
 
 app = FastAPI(title="Renta Car Backend")
 
@@ -58,7 +49,7 @@ class CreateBookingRequest(BaseModel):
     full_name: str = Field(..., alias="fullName")
     phone_number: str = Field(..., alias="phoneNumber")
     pickup_date_time: str = Field(..., alias="pickupDateTime")
-    return_date_time: Optional[str] = Field(None, alias="returnDateTime")
+    return_date_time: str = Field(..., alias="returnDateTime")
     pickup_location: str = Field(..., alias="pickupLocation")
     dropoff_location: str = Field(..., alias="dropoffLocation")
     car_category: str = Field(..., alias="carCategory")
@@ -147,243 +138,68 @@ class AllBookingsResponse(BaseModel):
 
 def is_car_available(db: Session, car_id: int, pickup_dt_str: str, return_dt_str: str):
     # Overlap Rule: new_start < existing_end AND new_end > existing_start
-    overlapping_booking = db.query(Booking).filter(
-        Booking.assigned_car_id == car_id,
-        Booking.status == "confirmed",
-        and_(
-            Booking.pickup_date_time < return_dt_str,
-            Booking.return_date_time > pickup_dt_str
-        )
-    ).first()
+    with open("debug_log.txt", "a") as f:
+        f.write(f"DEBUG: Checking car_id={car_id}, req {pickup_dt_str} to {return_dt_str}\n")
+        overlapping_booking = db.query(Booking).filter(
+            Booking.assigned_car_id == car_id,
+            Booking.status == "confirmed",
+            and_(
+                Booking.pickup_date_time < return_dt_str,
+                Booking.return_date_time > pickup_dt_str
+            )
+        ).first()
+        if overlapping_booking:
+            f.write(f"DEBUG: Found overlap id={overlapping_booking.id}, {overlapping_booking.pickup_date_time} to {overlapping_booking.return_date_time}\n")
+        else:
+            f.write(f"DEBUG: No overlap found for car_id={car_id}\n")
     return overlapping_booking is None
 
 def safe_calendar_sync(booking_id: int) -> None:
-    """Background: sync booking to Google Calendar with elite tracking."""
+    """Background: sync booking to Google Calendar."""
+    import logging
     db = SessionLocal()
     try:
-        b = db.query(Booking).filter(Booking.id == booking_id).first()
-        if not b:
+        booking = db.query(Booking).filter(Booking.id == booking_id).first()
+        if not booking:
             return
-
-        cal_id = os.getenv("GOOGLE_CALENDAR_ID")
-        sa_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-
-        if not cal_id or not sa_file:
-            b.calendar_status = "skipped"
-            db.commit()
-            return
-
-        start_dt = b.pickup_date_time
-        end_dt = b.return_date_time or (start_dt + timedelta(hours=1))
-
         try:
-            # Note: We assume calendar_service.create_calendar_event exists and is functional
-            # Refactored to match user's requested logic flow
-            result = calendar_service.create_calendar_event(b)
-            if result:
-                b.calendar_status = "created"
-                if isinstance(result, dict):
-                    b.calendar_event_id = result.get("id")
-            else:
-                b.calendar_status = "failed"
+            result = calendar_service.create_calendar_event(booking)
+            booking.calendar_status = "synced" if result else "failed"
         except Exception as e:
-            logger.exception("Calendar sync failed for booking_id=%s", booking_id)
-            b.calendar_status = "failed"
+            logging.getLogger(__name__).exception("Calendar sync failed for booking_id=%s: %s", booking_id, e)
+            booking.calendar_status = "failed"
         db.commit()
     except Exception:
-        logger.exception("Calendar sync fatal error")
-        db.rollback()
+        logging.getLogger(__name__).exception("Calendar sync error for booking_id=%s", booking_id)
     finally:
         db.close()
 
 # --- Helpers ---
 
 def mask_name(full_name: str) -> str:
-    return " ".join([f"{p[0]}***" for p in full_name.split()])
+    parts = full_name.strip().split()
+    if not parts:
+        return ""
+    first = parts[0]
+    last_initial = f" {parts[-1][0].upper()}." if len(parts) > 1 else ""
+    return f"{first}{last_initial}"
 
 def mask_phone(phone: str) -> str:
     p = phone.strip()
-    if len(p) < 5: return p
-    # Keep first two and last two
-    return f"{p[:2]}***{p[-2:]}"
+    if len(p) <= 7:
+        return p
+    return f"{p[:4]}****{p[-3:]}"
 
-def parse_datetime_robust(dt_str: str) -> datetime:
-    s = dt_str.strip()
-    dt = dtparser.parse(s)
+def normalize_datetime_to_iso_with_tz(dt_str: str):
+    dt = dtparser.parse(dt_str.strip())
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=KHI_TZ)
+    return dt.isoformat(timespec="seconds"), dt
 
-    # ✅ normalize timezone-aware datetimes to UTC naive (SQLite friendly)
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-
-    return dt
-
-def normalize_category(cat: str) -> str:
-    if not cat:
-        return ""
-    c = cat.strip().lower()
-    mapping = {
-        "economy": "Economy",
-        "sedan": "Sedan",
-        "suv": "SUV",
-        "luxury": "Luxury",
-        "premium": "Luxury",
-    }
-    return mapping.get(c, cat.strip().title())
-
-@app.post("/api/create-booking", response_model=BookingResponse)
-def create_booking(payload: CreateBookingRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    logger.info("CREATE_BOOKING HIT | payload=%s", payload.model_dump(by_alias=True))
-
-    # 1) Parse pickup
+def calculate_duration_str(start_str: str, end_str: str) -> str:
     try:
-        pickup_dt = parse_datetime_robust(payload.pickup_date_time)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid pickupDateTime: {str(e)}")
-
-    # 2) Parse/Default return
-    try:
-        if payload.return_date_time:
-            return_dt = parse_datetime_robust(payload.return_date_time)
-        else:
-            return_dt = pickup_dt + timedelta(hours=1)  # default 1 hour
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid returnDateTime: {str(e)}")
-
-    if return_dt <= pickup_dt:
-        return {
-            "success": False,
-            "error": "VALIDATION_ERROR",
-            "message": "Return time must be after pickup.",
-        }
-
-    # 3) Normalize category
-    cat = normalize_category(payload.car_category)
-
-    # 4) Find an available car (accept active/available) + case-insensitive category
-    car = db.query(Car).filter(
-        func.lower(Car.category) == cat.lower(),
-        Car.status.in_(["active", "available"])
-    ).first()
-
-    if not car:
-        return {
-            "success": False,
-            "error": "NO_AVAILABILITY",
-            "message": f"No cars available in category: {cat}.",
-        }
-
-    # 5) Save booking
-    booking_ref = generate_elite_reference(db)
-
-    booking = Booking(
-        booking_reference=booking_ref,
-        full_name=payload.full_name.strip(),
-        phone_number=payload.phone_number.strip(),
-        pickup_location=payload.pickup_location.strip(),
-        dropoff_location=payload.dropoff_location.strip(),
-        car_category=cat,
-        notes=payload.notes,
-        pickup_date_time=pickup_dt,
-        return_date_time=return_dt,
-        assigned_car_id=car.id,
-        status="booked",
-    )
-
-    try:
-        db.add(booking)
-        db.commit()
-        db.refresh(booking)
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-    # 6) Calendar sync (best-effort)
-    background_tasks.add_task(safe_calendar_sync, booking.id)
-
-    # 7) Return response (masking OK for voice)
-    return {
-        "success": True,
-        "message": "Booking created successfully.",
-        "status": "booked",
-        "bookingReference": booking.booking_reference,
-        "assignedCar": {
-            "id": car.id,
-            "plateNumber": car.plate_number,
-            "name": car.name,
-            "category": car.category,
-        },
-        "pickupDateTime": booking.pickup_date_time.isoformat(),
-        "returnDateTime": booking.return_date_time.isoformat() if booking.return_date_time else None,
-        "carCategory": booking.car_category,
-        "pickupLocation": booking.pickup_location,
-        "dropoffLocation": booking.dropoff_location,
-        "fullName": mask_name(booking.full_name),
-        "phoneNumber": mask_phone(booking.phone_number),
-        "calendarStatus": booking.calendar_status or "pending",
-    }
-
-def generate_elite_reference(db: Session) -> str:
-    today_str = datetime.now().strftime("%Y%m%d")
-    prefix = f"RC-{today_str}-"
-    last_booking = db.query(Booking).filter(
-        Booking.booking_reference.like(f"{prefix}%")
-    ).order_by(Booking.booking_reference.desc()).first()
-    
-    if last_booking:
-        try:
-            last_seq = int(last_booking.booking_reference.split("-")[-1])
-            new_seq = last_seq + 1
-        except:
-            new_seq = 1
-    else:
-        new_seq = 1
-    return f"{prefix}{new_seq:04d}"
-
-@app.get("/api/admin/analytics")
-def admin_analytics(
-    x_admin_key: str = Header(None, alias="X-Admin-Key"),
-    db: Session = Depends(get_db),
-):
-    env_admin_key = os.getenv("ADMIN_KEY", "RENTACAR_ELITE_2026")
-    if x_admin_key != env_admin_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    now = datetime.utcnow()
-    today_start = datetime(now.year, now.month, now.day)
-    next_24h = now + timedelta(hours=24)
-
-    total = db.query(func.count(Booking.id)).scalar()
-
-    by_status = dict(db.query(Booking.status, func.count(Booking.id)).group_by(Booking.status).all())
-    by_category = dict(db.query(Booking.car_category, func.count(Booking.id)).group_by(Booking.car_category).all())
-
-    today_count = db.query(func.count(Booking.id)).filter(Booking.created_at >= today_start).scalar()
-
-    upcoming_24h = db.query(func.count(Booking.id)).filter(
-        Booking.pickup_date_time >= now,
-        Booking.pickup_date_time <= next_24h,
-        Booking.status.in_(["booked", "confirmed"])
-    ).scalar()
-
-    cal_stats = dict(
-        db.query(Booking.calendar_status, func.count(Booking.id))
-          .group_by(Booking.calendar_status)
-          .all()
-    )
-
-    return {
-        "ok": True,
-        "total_bookings": total,
-        "bookings_by_status": by_status,
-        "bookings_by_category": by_category,
-        "today_bookings": today_count,
-        "upcoming_next_24h": upcoming_24h,
-        "calendar_status_counts": cal_stats,
-        "generated_at": now.isoformat()
-    }
-
-def calculate_duration_str(start: datetime, end: datetime) -> str:
-    try:
+        start = dtparser.parse(start_str)
+        end = dtparser.parse(end_str)
         diff = end - start
         days = diff.days
         hours = diff.seconds // 3600
@@ -396,15 +212,15 @@ def calculate_duration_str(start: datetime, end: datetime) -> str:
 
 @app.post("/api/create-booking", response_model=BookingResponse)
 def create_booking(payload: CreateBookingRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    dlog("payload_received", payload=payload.model_dump(by_alias=True))
     try:
-        pickup_dt = parse_datetime_robust(payload.pickup_date_time)
-        # Fix 1.4: Always set return_dt (default to +1h)
-        return_dt = parse_datetime_robust(payload.return_date_time) if payload.return_date_time else pickup_dt + timedelta(hours=1)
-        dlog("datetime_parsed", pickup=str(pickup_dt), ret=str(return_dt))
+        pickup_iso, pickup_dt = normalize_datetime_to_iso_with_tz(payload.pickup_date_time)
+        return_iso, return_dt = normalize_datetime_to_iso_with_tz(payload.return_date_time)
     except Exception as e:
-        dlog("parsing_error", error=str(e))
-        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+        return {
+            "success": False,
+            "error": "VALIDATION_ERROR",
+            "message": f"Invalid date format: {str(e)}",
+        }
 
     if return_dt <= pickup_dt:
         return {
@@ -413,81 +229,63 @@ def create_booking(payload: CreateBookingRequest, background_tasks: BackgroundTa
             "message": "Return time must be after pickup.",
         }
 
-    cat = normalize_category(payload.car_category)
-    dlog("category_normalized", raw=payload.car_category, normalized=cat)
-
-    # Fix 1.5: Assign the first non-overlapping car
-    cars = db.query(Car).filter(
-        func.lower(Car.category) == cat.lower(),
-        Car.status.in_(["active", "available"])
+    # Overlap check
+    available_cars = db.query(Car).filter(
+        Car.category == payload.car_category,
+        or_(Car.status == "active", Car.status == "available"),
     ).all()
-    dlog("car_candidates", count=len(cars))
 
-    assigned = None
-    for c in cars:
-        if not has_overlap(db, c.id, pickup_dt, return_dt):
-            assigned = c
+    assigned_car = None
+    for car in available_cars:
+        if is_car_available(db, car.id, pickup_iso, return_iso):
+            assigned_car = car
             break
 
-    if not assigned:
-        dlog("no_availability", category=cat)
+    if not assigned_car:
         return {
             "success": False,
             "error": "NO_AVAILABILITY",
-            "message": f"No {cat} cars available for that time slot.",
+            "message": "No cars available for selected dates.",
         }
 
-    dlog("assigned_car", assigned_car_id=assigned.id)
-    booking_ref = generate_elite_reference(db)
-
     booking = Booking(
-        booking_reference=booking_ref,
         full_name=payload.full_name.strip(),
         phone_number=payload.phone_number.strip(),
         pickup_location=payload.pickup_location.strip(),
         dropoff_location=payload.dropoff_location.strip(),
-        car_category=cat,
+        car_category=payload.car_category.strip(),
         notes=payload.notes,
-        pickup_date_time=pickup_dt,
-        return_date_time=return_dt,
-        assigned_car_id=assigned.id,
-        status="booked",
+        pickup_date_time=pickup_iso,
+        return_date_time=return_iso,
+        assigned_car_id=assigned_car.id,
+        status="confirmed",
     )
 
-    try:
-        db.add(booking)
-        db.commit()
-        db.refresh(booking)
-        dlog("booking_saved", booking_id=booking.id, ref=booking.booking_reference)
-    except Exception as e:
-        db.rollback()
-        dlog("database_error", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    db.add(booking)
+    db.commit()
+    db.refresh(booking)
 
     background_tasks.add_task(safe_calendar_sync, booking.id)
 
-    resp = {
+    return {
         "success": True,
         "message": "Booking created successfully.",
-        "status": "booked",
-        "bookingReference": booking.booking_reference,
+        "status": "confirmed",
         "assignedCar": {
-            "id": assigned.id,
-            "plateNumber": assigned.plate_number,
-            "name": assigned.name,
-            "category": assigned.category,
+            "id": assigned_car.id,
+            "plateNumber": assigned_car.plate_number,
+            "name": assigned_car.name,
+            "category": assigned_car.category,
         },
-        "pickupDateTime": booking.pickup_date_time.isoformat(),
-        "returnDateTime": booking.return_date_time.isoformat() if booking.return_date_time else None,
+        "pickupDateTime": booking.pickup_date_time,
+        "returnDateTime": booking.return_date_time,
         "carCategory": booking.car_category,
         "pickupLocation": booking.pickup_location,
         "dropoffLocation": booking.dropoff_location,
-        "fullName": mask_name(booking.full_name),
-        "phoneNumber": mask_phone(booking.phone_number),
+        "fullName": booking.full_name,
+        "phoneNumber": booking.phone_number,
         "calendarStatus": booking.calendar_status or "pending",
     }
-    dlog("response_prepared", resp=resp)
-    return resp
 
 @app.post("/api/check-availability", response_model=AvailabilityResponse)
 def check_availability(req: CheckAvailabilityRequest, db: Session = Depends(get_db)):
@@ -536,9 +334,7 @@ class GetBookingResponse(BaseModel):
 def get_booking(req: GetBookingRequest, db: Session = Depends(get_db)):
     query = db.query(Booking)
     
-    if req.booking_reference:
-        query = query.filter(Booking.booking_reference == req.booking_reference)
-    elif req.phone_number:
+    if req.phone_number:
         query = query.filter(Booking.phone_number == req.phone_number)
         if req.full_name:
             query = query.filter(Booking.full_name == req.full_name)
@@ -546,7 +342,7 @@ def get_booking(req: GetBookingRequest, db: Session = Depends(get_db)):
         return {
             "success": False,
             "error": "VALIDATION_ERROR",
-            "message": "Either Booking Reference or Phone Number is required."
+            "message": "Phone number is required."
         }
         
     booking = query.order_by(Booking.created_at.desc()).first()
@@ -564,8 +360,8 @@ def get_booking(req: GetBookingRequest, db: Session = Depends(get_db)):
             "id": booking.id,
             "customerName": booking.full_name,
             "customerPhone": booking.phone_number,
-            "pickupDateTime": booking.pickup_date_time.isoformat() if booking.pickup_date_time else "",
-            "returnDateTime": booking.return_date_time.isoformat() if booking.return_date_time else "",
+            "pickupDateTime": booking.pickup_date_time,
+            "returnDateTime": booking.return_date_time,
             "pickupLocation": booking.pickup_location,
             "dropoffLocation": booking.dropoff_location,
             "carCategory": booking.car_category,
@@ -610,7 +406,6 @@ def get_all_bookings(
     limit: int = 50, 
     offset: int = 0, 
     carCategory: Optional[str] = None, 
-    status: str = "booked",
     x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"), 
     db: Session = Depends(get_db)
 ):
@@ -619,7 +414,7 @@ def get_all_bookings(
     if x_admin_key != env_admin_key:
         raise HTTPException(status_code=403, detail="Forbidden: Valid Admin Key required.")
 
-    query = db.query(Booking).filter(Booking.status == status)
+    query = db.query(Booking).filter(Booking.status == "confirmed")
     if carCategory:
         query = query.filter(Booking.car_category == carCategory)
     
@@ -632,9 +427,9 @@ def get_all_bookings(
             "id": b.id,
             "customerName": b.full_name,
             "customerPhone": b.phone_number,
-            "pickupDateTime": b.pickup_date_time.isoformat() if b.pickup_date_time else "",
-            "returnDateTime": b.return_date_time.isoformat() if b.return_date_time else "",
-            "duration": calculate_duration_str(b.pickup_date_time, b.return_date_time) if b.return_date_time else "N/A",
+            "pickupDateTime": b.pickup_date_time,
+            "returnDateTime": b.return_date_time,
+            "duration": calculate_duration_str(b.pickup_date_time, b.return_date_time),
             "pickupLocation": b.pickup_location,
             "dropoffLocation": b.dropoff_location,
             "carCategory": b.car_category,

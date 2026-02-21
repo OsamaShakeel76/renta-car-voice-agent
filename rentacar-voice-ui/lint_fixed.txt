@@ -1,0 +1,22 @@
+﻿
+> rentacar-voice-ui@0.0.0 lint
+> eslint .
+
+
+D:\renta-car-voice-agent\rentacar-voice-ui\src\App.tsx
+  24:29  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  54:34  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  82:26  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+D:\renta-car-voice-agent\rentacar-voice-ui\src\components\BookingsList.tsx
+  59:8  warning  React Hook useEffect has a missing dependency: 'fetchBookings'. Either include it or remove the dependency array                  react-hooks/exhaustive-deps
+  67:8  warning  React Hook useEffect has missing dependencies: 'fetchBookings' and 'isAdmin'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+D:\renta-car-voice-agent\rentacar-voice-ui\src\components\HeroBackground.tsx
+  8:24  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+D:\renta-car-voice-agent\rentacar-voice-ui\src\components\VoicePanel.tsx
+  111:69  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+Γ£û 7 problems (5 errors, 2 warnings)
+

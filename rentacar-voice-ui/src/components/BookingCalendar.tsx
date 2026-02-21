@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
     format,
     addMonths,
@@ -16,10 +16,12 @@ import {
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, User, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+const ADMIN_KEY = import.meta.env.VITE_ADMIN_KEY || 'RENTACAR_ELITE_2026';
+
 interface Booking {
-    bookingReference: string;
-    fullName: string;
-    phoneNumber: string;
+    id: number;
+    customerName: string;
+    customerPhone: string;
     pickupDateTime: string;
     returnDateTime: string;
     pickupLocation: string;
@@ -34,13 +36,11 @@ export const BookingCalendar = ({ refreshKey }: { refreshKey?: number }) => {
     const [loading, setLoading] = useState(true);
     const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
 
-    useEffect(() => {
-        fetchBookings();
-    }, [refreshKey]);
-
-    const fetchBookings = async () => {
+    const fetchBookings = useCallback(async () => {
         try {
-            const response = await fetch('/api/get-all-bookings');
+            const response = await fetch('/api/get-all-bookings', {
+                headers: { 'X-Admin-Key': ADMIN_KEY }
+            });
             const data = await response.json();
             if (data.success) {
                 setBookings(data.bookings);
@@ -50,7 +50,11 @@ export const BookingCalendar = ({ refreshKey }: { refreshKey?: number }) => {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        fetchBookings();
+    }, [refreshKey, fetchBookings]);
 
     const renderHeader = () => {
         return (
@@ -133,14 +137,14 @@ export const BookingCalendar = ({ refreshKey }: { refreshKey?: number }) => {
                                 <motion.div
                                     initial={{ opacity: 0, x: -5 }}
                                     animate={{ opacity: 1, x: 0 }}
-                                    key={booking.bookingReference + idx}
+                                    key={(booking.id || idx) + idx}
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         setSelectedBooking(booking);
                                     }}
                                     className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 truncate cursor-pointer hover:bg-cyan-500/30 transition-colors"
                                 >
-                                    {booking.carCategory} - {booking.fullName.split(' ')[0]}
+                                    {booking.carCategory} - {(booking.customerName || 'Guest').split(' ')[0]}
                                 </motion.div>
                             ))}
                         </div>
@@ -210,7 +214,7 @@ export const BookingCalendar = ({ refreshKey }: { refreshKey?: number }) => {
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Customer</p>
-                                        <p className="text-white font-medium">{selectedBooking.fullName}</p>
+                                        <p className="text-white font-medium">{selectedBooking.customerName}</p>
                                     </div>
                                 </div>
 
